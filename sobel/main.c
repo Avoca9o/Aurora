@@ -3,6 +3,14 @@
 #include <stdlib.h>
 #include <pthread.h>
 
+const int INFO_BYTES = 54;
+const int HEIGHT_BYTE = 22;
+const int WIDTH_BYTE = 18;
+const int NUM_THREADS = 4;
+const double RED = 0.299;
+const double GREEN = 0.587;
+const double BLUE = 0.114;
+
 extern void* sobel(void* args);
 
 // struct for transporting data between threads
@@ -21,8 +29,8 @@ int main(int argc, char* argv[]) {
     }
     
     char* filename = argv[1];
-    FILE* input;
-    FILE* output;
+    FILE* input = NULL;
+    FILE* output = NULL;
     
     // checking the file
     if ((input = fopen(filename, "r")) == NULL) {
@@ -30,24 +38,24 @@ int main(int argc, char* argv[]) {
         exit(1);
     }
     
-    char* info = (char*)malloc(54);
+    char* info = malloc(INFO_BYTES);
     
     // reading .bmp info
-    for (int i = 0; i < 54; ++i) {
+    for (int i = 0; i < INFO_BYTES; ++i) {
         info[i] = fgetc(input);
     }
     
-    int width = *(int*)&info[18];
-    int height = *(int*)&info[22];
+    int width = *(int*)&info[WIDTH_BYTE];
+    int height = *(int*)&info[HEIGHT_BYTE];
     char r, g, b;
     int x;
     
     // allocating memory
-    char** base = (char**)malloc(height * sizeof(char*));
-    char** res = (char**)malloc(height * sizeof(char*));
+    char** base = malloc(height * sizeof(char*));
+    char** res = malloc(height * sizeof(char*));
     for (int i = 0; i < height; ++i) {
-        base[i] = (char*)malloc(width);
-        res[i] = (char*)malloc(width);
+        base[i] = malloc(width);
+        res[i] = malloc(width);
     }
     
     for (int i = 0; i < height; ++i) {
@@ -56,7 +64,7 @@ int main(int argc, char* argv[]) {
             r = fgetc(input);
             g = fgetc(input);
             b = fgetc(input);
-            x = (int)(0.299 * r + 0.587 * g + 0.114 * b) / 3;
+            x = (int)(RED * r + GREEN * g + BLUE * b) / 3;
             base[i][j] = (char)x;
         }
     }
@@ -70,59 +78,33 @@ int main(int argc, char* argv[]) {
         res[height - 1][i] = (char)0;
     }
     
-    // first thread
-    struct data* args1 = (struct data*)malloc(sizeof(struct data));
-    args1->width = width;
-    args1->start = 1;
-    args1->end = height / 4;
-    args1->base = base;
-    args1->res = res;
-    pthread_t a_thread;
-    pthread_create(&a_thread, NULL, sobel, (void*)args1);
+    pthread_t threads[NUM_THREADS];
+    struct data** args = malloc(NUM_THREADS * sizeof(struct data *));
     
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        args[i] = malloc(sizeof(struct data));
+        args[i]->width = width;
+        args[i]->start = i * (height / NUM_THREADS) + 1;
+        if (i == 3) {
+            args[i]->end = height - 2;
+        } else {
+            args[i]->end = (i + 1) * (height / NUM_THREADS);
+        }
+        args[i]->base = base;
+        args[i]->res = res;
+    }
     
-    // second thread
-    struct data* args2 = (struct data*)malloc(sizeof(struct data));
-    args2->width = width;
-    args2->start = height / 4 + 1;
-    args2->end = 2 * (height / 4);
-    args2->base = base;
-    args2->res = res;
-    pthread_t b_thread;
-    pthread_create(&b_thread, NULL, sobel, (void*)args2);
+    for (int i = 0; i < 4; ++i) {
+        pthread_create(&threads[i], NULL, sobel, (void *)args[i]);
+    }
+
     
-    // third thread
-    struct data* args3 = (struct data*)malloc(sizeof(struct data));
-    args3->width = width;
-    args3->start = 2 * (height / 4) + 1;
-    args3->end = 3 * (height / 4);
-    args3->base = base;
-    args3->res = res;
-    pthread_t c_thread;
-    pthread_create(&c_thread, NULL, sobel, (void*)args3);
-    
-    // fourth thread
-    struct data* args4 = (struct data*)malloc(sizeof(struct data));
-    args4->width = width;
-    args4->start = 3 * (height / 4) + 1;
-    args4->end = height - 2;
-    args4->base = base;
-    args4->res = res;
-    pthread_t d_thread;
-    pthread_create(&d_thread, NULL, sobel, (void*)args4);
-    
-    pthread_join(a_thread, NULL);
-    pthread_join(b_thread, NULL);
-    pthread_join(c_thread, NULL);
-    pthread_join(d_thread, NULL);
-    
-    free(args1);
-    free(args2);
-    free(args3);
-    free(args4);
+    for (int i = 0; i < 4; ++i) {
+       pthread_join(threads[i], NULL);
+    }
     
     output = fopen("output.bmp", "w+");
-    for (int i = 0; i < 54; ++i) {
+    for (int i = 0; i < INFO_BYTES; ++i) {
         fputc(info[i], output);
     }
     for (int i = 0; i < height; ++i) {
@@ -133,6 +115,10 @@ int main(int argc, char* argv[]) {
         }
     }
     
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        free(args[i]);
+    }
+    free(args);
     free(info);
     for (int i = 0; i < height; ++i) {
         free(base[i]);
